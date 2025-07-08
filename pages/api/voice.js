@@ -21,7 +21,7 @@ export default async function handler(req, res) {
 
   const twiml = new Twilio.twiml.VoiceResponse();
 
-  // First and second gather attempts
+  // First and second DTMF gather attempts
   if (!Digits && attempt <= 2) {
     const nextAttempt = attempt + 1;
     const gather = twiml.gather({
@@ -42,30 +42,27 @@ export default async function handler(req, res) {
 
   // Fallback via SMS if no valid code after 2 tries
   if (!Digits) {
-    // Send SMS to continue via text
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken  = process.env.TWILIO_AUTH_TOKEN;
-    const client     = Twilio(accountSid, authToken);
-
+    const client = Twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
     await client.messages.create({
       to:   From,
       from: To,
       body: 'Hi! Please reply with your code to continue.'
     });
 
-    // Log the attempt to Google Sheets
-    const sheetParams = new URLSearchParams({
-      CallSid,
-      From,
-      To,
-      Digits: '',
-      attempt: attempt.toString()
-    });
-    await fetch(process.env.GOOGLE_SHEETS_WEBHOOK_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: sheetParams.toString()
-    });
+    // Log the attempt to Airtable
+    await fetch(
+      `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${encodeURIComponent(process.env.AIRTABLE_TABLE_NAME)}`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fields: { CallSid, From, To, Digits: '', Attempt: attempt }
+        })
+      }
+    );
 
     twiml.say('I didn\'t receive a valid code. I\'ve sent you an SMS to continue via text. Goodbye.');
     res.setHeader('Content-Type', 'text/xml');
@@ -73,19 +70,20 @@ export default async function handler(req, res) {
   }
 
   // We have a valid Digits entry
-  // Log the successful code to Google Sheets
-  const successParams = new URLSearchParams({
-    CallSid,
-    From,
-    To,
-    Digits,
-    attempt: attempt.toString()
-  });
-  await fetch(process.env.GOOGLE_SHEETS_WEBHOOK_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: successParams.toString()
-  });
+  // Log the successful code to Airtable
+  await fetch(
+    `https://api.airtable.com/v0/${process.env.AIRTABLE_BASE_ID}/${encodeURIComponent(process.env.AIRTABLE_TABLE_NAME)}`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.AIRTABLE_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        fields: { CallSid, From, To, Digits, Attempt: attempt }
+      })
+    }
+  );
 
   twiml.say('Thank you! We’ve received your code and will be with you shortly.');
   res.setHeader('Content-Type', 'text/xml');
